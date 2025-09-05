@@ -1,9 +1,9 @@
 #---------------------------------------------------------------
-# EKS Cluster
+# EKS Auto Mode Cluster
 #---------------------------------------------------------------
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 19.15"
+  version = "~> 20.33"
 
   cluster_name    = local.name
   cluster_version = var.eks_cluster_version
@@ -11,11 +11,21 @@ module "eks" {
   #WARNING: Avoid using this option (cluster_endpoint_public_access = true) in preprod or prod accounts. This feature is designed for sandbox accounts, simplifying cluster deployment and testing.
   cluster_endpoint_public_access = true
 
-  vpc_id = module.vpc.vpc_id
-  # Filtering only Secondary CIDR private subnets starting with "100.". Subnet IDs where the EKS Control Plane ENIs will be created
-  subnet_ids = compact([for subnet_id, cidr_block in zipmap(module.vpc.private_subnets, module.vpc.private_subnets_cidr_blocks) :
-    substr(cidr_block, 0, 4) == "100." ? subnet_id : null]
-  )
+  # Add the IAM identity that terraform is using as a cluster admin
+  authentication_mode                      = "API_AND_CONFIG_MAP"
+  enable_cluster_creator_admin_permissions = true
+
+  # Enable EKS Auto Mode
+  cluster_compute_config = {
+    enabled    = true
+    node_pools = ["general-purpose"]
+  }
+
+  # Auto Mode clusters automatically manage add-ons
+  # Remove explicit add-on configuration as Auto Mode handles this
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnets
 
   # Combine root account, current user/role and additinoal roles to be able to access the cluster KMS key - required for terraform updates
   kms_key_administrators = distinct(concat([
@@ -23,19 +33,6 @@ module "eks" {
     var.kms_key_admin_roles,
     [data.aws_iam_session_context.current.issuer_arn]
 
-  ))
-
-  manage_aws_auth_configmap = true
-  aws_auth_roles = distinct(concat([{
-    # We need to add in the Karpenter node IAM role for nodes launched by Karpenter
-    rolearn  = module.eks_blueprints_addons.karpenter.node_iam_role_arn
-    username = "system:node:{{EC2PrivateDNSName}}"
-    groups = [
-      "system:bootstrappers",
-      "system:nodes",
-    ]
-    }],
-    var.aws_auth_roles
   ))
 
   #---------------------------------------
@@ -82,23 +79,6 @@ module "eks" {
       AmazonSSMManagedInstanceCore = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
     }
 
-    # NVMe instance store volumes are automatically enumerated and assigned a device
-    pre_bootstrap_user_data = <<-EOT
-      cat <<-EOF > /etc/profile.d/bootstrap.sh
-      #!/bin/sh
-
-      # Configure the NVMe volumes in RAID0 configuration in the bootstrap.sh call.
-      # https://github.com/awslabs/amazon-eks-ami/blob/master/files/bootstrap.sh#L35
-      # This will create a RAID volume and mount it at /mnt/k8s-disks/0
-      #   then mount that volume to /var/lib/kubelet, /var/lib/containerd, and /var/log/pods
-      #   this allows the container daemons and pods to write to the RAID0 by default without needing PersistentVolumes
-      export LOCAL_DISKS='raid0'
-      EOF
-
-      # Source extra environment variables in bootstrap script
-      sed -i '/^set -o errexit/a\\nsource /etc/profile.d/bootstrap.sh' /etc/eks/bootstrap.sh
-    EOT
-
     ebs_optimized = true
     # This block device is used only for root volume. Adjust volume according to your size.
     # NOTE: Don't use this volume for Spark workloads
@@ -113,99 +93,103 @@ module "eks" {
     }
   }
 
-  eks_managed_node_groups = {
-    #  We recommend to have a MNG to place your critical workloads and add-ons
-    #  Then rely on Karpenter to scale your workloads
-    #  You can also make uses on nodeSelector and Taints/tolerations to spread workloads on MNG or Karpenter provisioners
-    core_node_group = {
-      name        = "core-node-group"
-      description = "EKS managed node group example launch template"
-      # Filtering only Secondary CIDR private subnets starting with "100.". Subnet IDs where the nodes/node groups will be provisioned
-      subnet_ids = compact([for subnet_id, cidr_block in zipmap(module.vpc.private_subnets, module.vpc.private_subnets_cidr_blocks) :
-        substr(cidr_block, 0, 4) == "100." ? subnet_id : null]
-      )
+  # Auto Mode manages compute resources automatically
+  # Remove managed node groups
 
-      min_size     = 3
-      max_size     = 9
-      desired_size = 3
+  tags = local.tags
+}
 
-      instance_types = ["m5.xlarge"]
+#---------------------------------------------------------------
+# EKS Amazon CloudWatch Observability Role
+#---------------------------------------------------------------
+resource "aws_iam_role" "cloudwatch_observability_role" {
+  name_prefix = "${local.name}-eks-cw-agent-"
 
-      labels = {
-        WorkerType    = "ON_DEMAND"
-        NodeGroupType = "core"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Effect = "Allow"
+        Principal = {
+          Federated = module.eks.oidc_provider_arn
+        }
+        Condition = {
+          StringEquals = {
+            "${replace(module.eks.cluster_oidc_issuer_url, "https://", "")}:sub" : "system:serviceaccount:amazon-cloudwatch:cloudwatch-agent",
+            "${replace(module.eks.cluster_oidc_issuer_url, "https://", "")}:aud" : "sts.amazonaws.com"
+          }
+        }
       }
+    ]
+  })
+}
 
-      tags = {
-        Name                     = "core-node-grp",
-        "karpenter.sh/discovery" = local.name
-      }
-    }
+resource "aws_iam_role_policy_attachment" "cloudwatch_observability_policy_attachment" {
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+  role       = aws_iam_role.cloudwatch_observability_role.name
+}
 
-    spark_ondemand_r5d = {
-      name        = "spark-ondemand-r5d"
-      description = "Spark managed node group for Driver pods"
-      # Filtering only Secondary CIDR private subnets starting with "100.". Subnet IDs where the nodes/node groups will be provisioned
-      subnet_ids = [element(compact([for subnet_id, cidr_block in zipmap(module.vpc.private_subnets, module.vpc.private_subnets_cidr_blocks) :
-        substr(cidr_block, 0, 4) == "100." ? subnet_id : null]), 0)
-      ]
-
-      min_size     = 0
-      max_size     = 20
-      desired_size = 0
-
-      instance_types = ["r5d.xlarge"] # r5d.xlarge 4vCPU - 32GB - 1 x 150 NVMe SSD - Up to 10Gbps - Up to 4,750 Mbps EBS Bandwidth
-
-      labels = {
-        WorkerType    = "ON_DEMAND"
-        NodeGroupType = "spark-on-demand-ca"
-      }
-
-      taints = [{
-        key    = "spark-on-demand-ca",
-        value  = true
-        effect = "NO_SCHEDULE"
-      }]
-
-      tags = {
-        Name          = "spark-ondemand-r5d"
-        WorkerType    = "ON_DEMAND"
-        NodeGroupType = "spark-on-demand-ca"
-      }
-    }
-
-    # ec2-instance-selector --vcpus=48 --gpus 0 -a arm64 --allow-list '.*d.*'
-    # This command will give you the list of the instances with similar vcpus for arm64 dense instances
-    spark_spot_x86_48cpu = {
-      name        = "spark-spot-48cpu"
-      description = "Spark Spot node group for executor workloads"
-      # Filtering only Secondary CIDR private subnets starting with "100.". Subnet IDs where the nodes/node groups will be provisioned
-      subnet_ids = [element(compact([for subnet_id, cidr_block in zipmap(module.vpc.private_subnets, module.vpc.private_subnets_cidr_blocks) :
-        substr(cidr_block, 0, 4) == "100." ? subnet_id : null]), 0)
-      ]
-
-      min_size     = 0
-      max_size     = 12
-      desired_size = 0
-
-      instance_types = ["r5d.12xlarge", "r6id.12xlarge", "c5ad.12xlarge", "c5d.12xlarge", "c6id.12xlarge", "m5ad.12xlarge", "m5d.12xlarge", "m6id.12xlarge"] # 48cpu - 2 x 1425 NVMe SSD
-
-      labels = {
-        WorkerType    = "SPOT"
-        NodeGroupType = "spark-spot-ca"
-      }
-
-      taints = [{
-        key    = "spark-spot-ca"
-        value  = true
-        effect = "NO_SCHEDULE"
-      }]
-
-      tags = {
-        Name          = "spark-node-grp"
-        WorkerType    = "SPOT"
-        NodeGroupType = "spark"
-      }
+#---------------------------------------------------------------
+# IRSA for EBS CSI Driver
+#---------------------------------------------------------------
+module "ebs_csi_driver_irsa" {
+  source                = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version               = "~> 5.55"
+  role_name_prefix      = format("%s-%s-", local.name, "ebs-csi-driver")
+  attach_ebs_csi_policy = true
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:ebs-csi-controller-sa"]
     }
   }
+  tags = local.tags
+}
+
+#---------------------------------------------------------------
+# IRSA for Mountpoint S3 CSI Driver
+#---------------------------------------------------------------
+module "s3_csi_driver_irsa" {
+  source           = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version          = "~> 5.55"
+  role_name_prefix = format("%s-%s-", local.name, "s3-csi-driver")
+  role_policy_arns = {
+    # WARNING: Demo purpose only. Bring your own IAM policy with least privileges
+    s3_access = aws_iam_policy.s3_irsa_access_policy.arn
+    #kms_access = "arn:aws:iam::aws:policy/AWSKeyManagementServicePowerUser"
+  }
+  oidc_providers = {
+    main = {
+      provider_arn               = module.eks.oidc_provider_arn
+      namespace_service_accounts = ["kube-system:s3-csi-driver-sa"]
+    }
+  }
+  tags = local.tags
+}
+
+resource "aws_iam_policy" "s3_irsa_access_policy" {
+  name_prefix = "${local.name}-S3Access-"
+  path        = "/"
+  description = "S3 Access for Nodes"
+
+  # Terraform's "jsonencode" function converts a
+  # Terraform expression result to valid JSON syntax.
+  # checkov:skip=CKV_AWS_288: Demo purpose IAM policy
+  # checkov:skip=CKV_AWS_290: Demo purpose IAM policy
+  # checkov:skip=CKV_AWS_289: Demo purpose IAM policy
+  # checkov:skip=CKV_AWS_355: Demo purpose IAM policy
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "s3:*",
+          "s3express:*"
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      },
+    ]
+  })
 }
