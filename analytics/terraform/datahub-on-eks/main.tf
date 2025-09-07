@@ -1,6 +1,6 @@
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 19.15"
+  version = "~> 20.0"
 
   cluster_name    = local.name
   cluster_version = var.eks_cluster_version
@@ -11,6 +11,7 @@ module "eks" {
   vpc_id     = local.vpc_id
   subnet_ids = local.private_subnets
 
+  enable_cluster_creator_admin_permissions = true
 
   eks_managed_node_group_defaults = {
     iam_role_additional_policies = {
@@ -33,7 +34,8 @@ module "eks" {
       desired_size = 3
 
       force_update_version = true
-      instance_types       = ["m5.xlarge"]
+      instance_types       = ["m6g.xlarge"]
+      ami_type             = "AL2023_ARM_64_STANDARD"
 
       ebs_optimized = true
       block_device_mappings = {
