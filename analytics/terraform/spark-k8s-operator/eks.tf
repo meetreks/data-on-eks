@@ -23,6 +23,14 @@ module "eks" {
 
   # Auto Mode clusters automatically manage add-ons
   # Remove explicit add-on configuration as Auto Mode handles this
+  #Implict S3 CSI Driver Addition
+  cluster_addons = {
+    aws-mountpoint-s3-csi-driver = {
+      service_account_role_arn = module.s3_csi_driver_irsa.iam_role_arn
+      addon_version            = "v1.15.0-eksbuild.1"
+      most_recent              = false
+    }
+  }
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
