@@ -64,7 +64,7 @@ module "eks_data_addons" {
   #---------------------------------------------------------------
   # EKS Auto Mode NodeClasses and NodePools for Spark Workloads
   #---------------------------------------------------------------
-  enable_karpenter_resources = false  # Disable Karpenter resources
+  #enable_karpenter_resources = false  # Disable Karpenter resources
 
   #---------------------------------------------------------------
   # Spark Operator Add-on
