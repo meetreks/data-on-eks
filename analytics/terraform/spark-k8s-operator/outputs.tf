@@ -76,3 +76,8 @@ output "raydata_config" {
     iam_role_arn      = module.spark_team_irsa["raydata"].iam_role_arn
   } : null
 }
+# Output the IAM role name for EKS Auto Mode NodeClasses
+output "node_iam_role_name" {
+  description = "EKS Auto node IAM role name"
+  value       = module.eks.node_iam_role_name
+}

@@ -5,7 +5,7 @@ kind: NodeClass
 metadata:
   name: spark-compute-optimized
 spec:
-  role: "${spark_node_role_arn}"
+  role: node_iam_role_name
   subnetSelectorTerms:
     - tags:
         Name: "*private*"
@@ -23,7 +23,7 @@ spec:
     Team: "analytics"
 
 ---
-apiVersion: eks.amazonaws.com/v1
+apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
   name: spark-compute-optimized
@@ -36,7 +36,7 @@ spec:
         multiArch: "Spark"
     spec:
       nodeClassRef:
-        apiVersion: eks.amazonaws.com/v1
+        group: eks.amazonaws.com
         kind: NodeClass
         name: spark-compute-optimized
       requirements:
@@ -74,7 +74,7 @@ kind: NodeClass
 metadata:
   name: spark-graviton-memory-optimized
 spec:
-  role: "${spark_node_role_arn}"
+  role: node_iam_role_name
   subnetSelectorTerms:
     - tags:
         Name: "*private*"
@@ -92,7 +92,7 @@ spec:
     Team: "analytics"
 
 ---
-apiVersion: eks.amazonaws.com/v1
+apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
   name: spark-graviton-memory-optimized
@@ -105,7 +105,7 @@ spec:
         multiArch: "Spark"
     spec:
       nodeClassRef:
-        apiVersion: eks.amazonaws.com/v1
+        group: eks.amazonaws.com
         kind: NodeClass
         name: spark-graviton-memory-optimized
       requirements:
@@ -143,7 +143,7 @@ kind: NodeClass
 metadata:
   name: spark-memory-optimized
 spec:
-  role: "${spark_node_role_arn}"
+  role: node_iam_role_name
   subnetSelectorTerms:
     - tags:
         Name: "*private*"
@@ -161,7 +161,7 @@ spec:
     Team: "analytics"
 
 ---
-apiVersion: eks.amazonaws.com/v1
+apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
   name: spark-memory-optimized
@@ -173,7 +173,7 @@ spec:
         NodeGroupType: "SparkMemoryOptimized"
     spec:
       nodeClassRef:
-        apiVersion: eks.amazonaws.com/v1
+        group: eks.amazonaws.com
         kind: NodeClass
         name: spark-memory-optimized
       requirements:
@@ -211,7 +211,7 @@ kind: NodeClass
 metadata:
   name: spark-compute-ondemand
 spec:
-  role: "${spark_node_role_arn}"
+  role: node_iam_role_name
   subnetSelectorTerms:
     - tags:
         Name: "*private*"
@@ -229,7 +229,7 @@ spec:
     Team: "analytics"
 
 ---
-apiVersion: eks.amazonaws.com/v1
+apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
   name: spark-compute-ondemand
@@ -242,7 +242,7 @@ spec:
         multiArch: "Spark"
     spec:
       nodeClassRef:
-        apiVersion: eks.amazonaws.com/v1
+        group: eks.amazonaws.com
         kind: NodeClass
         name: spark-compute-ondemand
       requirements:
@@ -265,7 +265,7 @@ kind: NodeClass
 metadata:
   name: spark-compute-spot
 spec:
-  role: "${spark_node_role_arn}"
+  role: node_iam_role_name
   subnetSelectorTerms:
     - tags:
         Name: "*private*"
@@ -283,7 +283,7 @@ spec:
     Team: "analytics"
 
 ---
-apiVersion: eks.amazonaws.com/v1
+apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
   name: spark-compute-spot-cmr
@@ -296,7 +296,7 @@ spec:
         multiArch: "Spark"
     spec:
       nodeClassRef:
-        apiVersion: eks.amazonaws.com/v1
+        group: eks.amazonaws.com
         kind: NodeClass
         name: spark-compute-spot
       requirements:
@@ -317,7 +317,7 @@ spec:
   weight: 100
 
 ---
-apiVersion: eks.amazonaws.com/v1
+apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
   name: spark-compute-spot-r
@@ -330,7 +330,7 @@ spec:
         multiArch: "Spark"
     spec:
       nodeClassRef:
-        apiVersion: eks.amazonaws.com/v1
+        group: eks.amazonaws.com
         kind: NodeClass
         name: spark-compute-spot
       requirements:
@@ -359,7 +359,7 @@ kind: NodeClass
 metadata:
   name: spark-graviton-compute
 spec:
-  role: "${spark_node_role_arn}"
+  role: node_iam_role_name
   subnetSelectorTerms:
     - tags:
         Name: "*private*"
@@ -377,7 +377,7 @@ spec:
     Team: "analytics"
 
 ---
-apiVersion: eks.amazonaws.com/v1
+apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
   name: spark-compute-graviton-od-memory
@@ -390,7 +390,7 @@ spec:
         multiArch: "Spark"
     spec:
       nodeClassRef:
-        apiVersion: eks.amazonaws.com/v1
+        group: eks.amazonaws.com
         kind: NodeClass
         name: spark-graviton-compute
       requirements:
@@ -420,7 +420,7 @@ spec:
   weight: 100
 
 ---
-apiVersion: eks.amazonaws.com/v1
+apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
   name: spark-compute-graviton
@@ -433,7 +433,7 @@ spec:
         multiArch: "Spark"
     spec:
       nodeClassRef:
-        apiVersion: eks.amazonaws.com/v1
+        group: eks.amazonaws.com
         kind: NodeClass
         name: spark-graviton-compute
       requirements:
@@ -471,7 +471,7 @@ kind: NodeClass
 metadata:
   name: spark-operator-benchmark
 spec:
-  role: "${spark_node_role_arn}"
+  role: node_iam_role_name
   subnetSelectorTerms:
     - tags:
         Name: "*private*"
@@ -489,7 +489,7 @@ spec:
     Team: "analytics"
 
 ---
-apiVersion: eks.amazonaws.com/v1
+apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
   name: spark-operator-benchmark
@@ -501,7 +501,7 @@ spec:
         NodeGroupType: "spark-operator-benchmark"
     spec:
       nodeClassRef:
-        apiVersion: eks.amazonaws.com/v1
+        group: eks.amazonaws.com
         kind: NodeClass
         name: spark-operator-benchmark
       requirements:
