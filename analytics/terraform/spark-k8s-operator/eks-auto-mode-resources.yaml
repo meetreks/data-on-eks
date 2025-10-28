@@ -82,7 +82,6 @@ spec:
   securityGroupSelectorTerms:
     - tags:
         Name: "*eks*cluster*sg*"
-  instanceStorePolicy: RAID0
   snatPolicy: Disabled
   tags:
     Workload: "spark-compute-nitro-nvme"
