@@ -1,0 +1,89 @@
+---
+# ---------------------------------------------------------------------
+# ClickHouse Keeper installation — 3 replicas for quorum
+# ---------------------------------------------------------------------
+# ClickHouseKeeperInstallation is the Altinity operator's CR for a
+# dedicated Keeper — ClickHouse's native ZK-compatible coordinator,
+# written in C++, no JVM. Three replicas is the minimum for a
+# quorum-based deployment; one failure is tolerated.
+#
+# Pod placement:
+#   - nodeSelector `workload=clickhouse`   — pins to the dedicated
+#                                            NodePool.
+#   - toleration for `workload=clickhouse:NoSchedule` — required to
+#                                            get past the NodePool taint.
+#   - Hard podAntiAffinity keyed on `topology.kubernetes.io/zone` —
+#     one Keeper per AZ. Critical for quorum: two Keepers in the same
+#     AZ would drop the majority if that AZ blinks.
+#   - `karpenter.sh/do-not-disrupt: "true"` annotation — Karpenter
+#     won't voluntarily consolidate a Keeper node. Only drift, expiry,
+#     or forced disruption will replace it.
+#
+# The Altinity operator names the Service that fronts this Keeper as
+# `<CR-name>-<cluster-name>`, so with the CR name "keeper" and the
+# inner cluster also called "keeper" the resulting DNS name is
+# `keeper-keeper.clickhouse.svc.cluster.local:2181`. That's the string
+# the ClickHouse CHI has to reference (see cluster.yaml).
+# ---------------------------------------------------------------------
+apiVersion: "clickhouse-keeper.altinity.com/v1"
+kind: "ClickHouseKeeperInstallation"
+metadata:
+  name: keeper
+  namespace: clickhouse
+spec:
+  configuration:
+    clusters:
+      - name: keeper
+        layout:
+          replicasCount: 3
+    settings:
+      logger/level: information
+      keeper_server/tcp_port: "2181"
+      keeper_server/raft_configuration/server/port: "9444"
+  defaults:
+    templates:
+      podTemplate: keeper-pod
+      dataVolumeClaimTemplate: keeper-data
+  templates:
+    podTemplates:
+      - name: keeper-pod
+        metadata:
+          annotations:
+            # Keeper losing a member forces a raft leader re-election
+            # and pauses coordination briefly. Only drift / expiry /
+            # forced disruption should touch these nodes.
+            karpenter.sh/do-not-disrupt: "true"
+        spec:
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      clickhouse-keeper.altinity.com/chk: keeper
+                  topologyKey: topology.kubernetes.io/zone
+          nodeSelector:
+            workload: clickhouse
+          tolerations:
+            - key: workload
+              operator: Equal
+              value: clickhouse
+              effect: NoSchedule
+          containers:
+            - name: clickhouse-keeper
+              image: clickhouse/clickhouse-keeper:24.8-alpine
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1Gi
+                limits:
+                  cpu: "1"
+                  memory: 2Gi
+    volumeClaimTemplates:
+      - name: keeper-data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: clickhouse-gp3
+          resources:
+            requests:
+              storage: 10Gi

@@ -109,3 +109,15 @@ variable "enable_celeborn" {
   type        = bool
   default     = true
 }
+
+variable "enable_clickhouse_lab" {
+  description = "Enable the Apache ClickHouse lab. When true, Terraform installs the Altinity ClickHouse Operator into the 'clickhouse' namespace and creates the 'clickhouse-gp3' StorageClass. The dedicated ClickHouse Karpenter NodePool ('nodepool-clickhouse.yaml') is applied regardless — it is inert without ClickHouse pods."
+  type        = bool
+  default     = true
+}
+
+variable "altinity_operator_version" {
+  description = "Altinity ClickHouse Operator Helm chart version. Pinned to 0.24.5 — later 0.27.x versions had watch-event reliability issues on this Auto Mode cluster during earlier testing. Bump once upstream re-verifies against Auto Mode."
+  type        = string
+  default     = "0.24.5"
+}

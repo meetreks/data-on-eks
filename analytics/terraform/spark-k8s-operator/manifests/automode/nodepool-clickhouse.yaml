@@ -1,0 +1,99 @@
+# ---------------------------------------------------------------------
+# Dedicated ClickHouse NodePool
+# ---------------------------------------------------------------------
+# ClickHouse replicas are stateful — each one owns a ReplicatedMergeTree
+# shard's local part files on its own EBS volume, plus a running merge
+# schedule and page cache. Same reasoning as Kafka: keep them off the
+# Spark (Spot) pool and off the Kafka pool, on their own On-Demand pool.
+#
+# Two-way isolation with the ClickHouse and Keeper pods:
+#   - Node label `workload=clickhouse`     — used for observability and
+#                                             selectors.
+#   - Taint  `workload=clickhouse:NoSchedule` — nothing else in the
+#                                                cluster tolerates this,
+#                                                so nothing else lands
+#                                                here.
+#   - The CHI + Keeper CRs (analytics/clickhouse/{cluster,keeper}.yaml)
+#     carry the matching toleration and nodeSelector.
+#
+# Consolidation:
+#   - WhenEmpty with a 5-minute delay. Voluntary consolidation of a
+#     partially-loaded ClickHouse or Keeper node causes a replica
+#     restart mid-merge or mid-query; the pod annotation
+#     `karpenter.sh/do-not-disrupt: "true"` on both CR pod templates
+#     defends against that further. Karpenter still handles expiry,
+#     drift and forced disruption.
+#
+# Instance selection (AWS ClickHouse-on-EBS guidance):
+#   - m/r families, Gen 5+, Nitro. ClickHouse read performance is
+#     dominated by memory (page cache for hot parts and indexes), so
+#     `r` (memory-optimized) is the natural default; `m` stays in the
+#     mix for smaller footprints and better availability during dips.
+#   - `amd64` only. Altinity's operator + `clickhouse/clickhouse-server`
+#     images are amd64-first — arm64 support has caught up but the
+#     workshop pins amd64 for predictable behaviour across the
+#     ClickHouse and operator/exporter/keeper images.
+#   - Older `m5*/r5*` are excluded via `generation > 4` — they have
+#     lower EBS baselines and can't hit the 1000 MiB/s per-volume
+#     throughput this lab provisions.
+#   - Sizes 2xlarge..8xlarge — the workshop CH pods request 1 CPU /
+#     4 GiB with 4 CPU / 16 GiB limits, so `m5.2xlarge` (8 vCPU /
+#     32 GiB) is the smallest fit; larger sizes let a participant
+#     scale up if they want to load more data.
+#
+# For a step up in performance beyond the workshop shape:
+#   - `i8g` (Graviton4) or `i4i` (x86) — local NVMe SSDs, ClickHouse
+#     as an AWS-listed target workload. Instance-store trade-off:
+#     node loss = data loss on that replica, safe with 3 replicas but
+#     adds operational sharpness (Karpenter drift/replace).
+# ---------------------------------------------------------------------
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: clickhouse
+spec:
+  template:
+    metadata:
+      labels:
+        workload: clickhouse
+    spec:
+      taints:
+        - key: workload
+          value: clickhouse
+          effect: NoSchedule
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: ebs-gp3-1000gi-6000iops-1000tp
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        # amd64 only. Altinity operator + ClickHouse server + Keeper
+        # images are amd64-first; pin to keep image availability
+        # predictable across the whole stack.
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        # Memory-optimised (r) preferred, general-purpose (m) as a
+        # fallback when r-family capacity is tight in an AZ.
+        - key: eks.amazonaws.com/instance-category
+          operator: In
+          values: ["m", "r"]
+        - key: eks.amazonaws.com/instance-size
+          operator: In
+          values: ["2xlarge", "4xlarge", "8xlarge"]
+        - key: eks.amazonaws.com/instance-hypervisor
+          operator: In
+          values: ["nitro"]
+        # Gen 5+ only. Older m4/r4 don't hit the EBS bandwidth we need
+        # for the tuned clickhouse-gp3 StorageClass.
+        - key: eks.amazonaws.com/instance-generation
+          operator: Gt
+          values: ["4"]
+  limits:
+    cpu: "200"
+    memory: 800Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 5m

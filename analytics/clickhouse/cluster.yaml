@@ -1,0 +1,87 @@
+---
+# ---------------------------------------------------------------------
+# Replicated ClickHouse cluster — 1 shard x 3 replicas
+# ---------------------------------------------------------------------
+# The minimum viable HA topology: one shard with three replicas of the
+# same data spread across three AZs. One AZ failure takes down exactly
+# one replica; the other two keep serving reads and writes via
+# ReplicatedMergeTree replication coordinated through ClickHouse Keeper.
+#
+# The `zookeeper.nodes` field name is legacy — the daemon on the other
+# end of the wire is ClickHouse Keeper (C++, no JVM), speaking the
+# ZooKeeper wire protocol on port 2181 for backwards compatibility with
+# older configs. There is no actual ZooKeeper in this cluster.
+#
+# Pod placement mirrors the Keeper CR: nodeSelector pins to the
+# dedicated NodePool, AZ-level podAntiAffinity ensures one CH replica
+# per AZ, and the `karpenter.sh/do-not-disrupt` annotation defends
+# against consolidation-during-merge.
+# ---------------------------------------------------------------------
+apiVersion: "clickhouse.altinity.com/v1"
+kind: "ClickHouseInstallation"
+metadata:
+  name: cluster
+  namespace: clickhouse
+spec:
+  configuration:
+    # Point the CH cluster at the Keeper Service the operator created
+    # for the ClickHouseKeeperInstallation named "keeper". Altinity's
+    # naming pattern is `<CR-name>-<cluster-name>` — with both named
+    # "keeper", the resulting Service is `keeper-keeper`.
+    zookeeper:
+      nodes:
+        - host: keeper-keeper.clickhouse.svc.cluster.local
+          port: 2181
+    clusters:
+      - name: replicated
+        layout:
+          shardsCount: 1
+          replicasCount: 3
+  defaults:
+    templates:
+      podTemplate: clickhouse-pod
+      dataVolumeClaimTemplate: clickhouse-data
+  templates:
+    podTemplates:
+      - name: clickhouse-pod
+        metadata:
+          annotations:
+            # Merges and long-running queries would be killed
+            # mid-flight if Karpenter voluntarily consolidated a
+            # ClickHouse node. Only drift / expiry / forced disruption
+            # should touch these nodes.
+            karpenter.sh/do-not-disrupt: "true"
+        spec:
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchLabels:
+                      clickhouse.altinity.com/chi: cluster
+                  topologyKey: topology.kubernetes.io/zone
+          nodeSelector:
+            workload: clickhouse
+          tolerations:
+            - key: workload
+              operator: Equal
+              value: clickhouse
+              effect: NoSchedule
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:24.8
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 4Gi
+                limits:
+                  cpu: "4"
+                  memory: 16Gi
+    volumeClaimTemplates:
+      - name: clickhouse-data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: clickhouse-gp3
+          resources:
+            requests:
+              storage: 50Gi
