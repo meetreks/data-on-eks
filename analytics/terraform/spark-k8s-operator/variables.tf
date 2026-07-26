@@ -109,3 +109,15 @@ variable "enable_celeborn" {
   type        = bool
   default     = true
 }
+
+variable "enable_flink_lab" {
+  description = "Enable the Apache Flink lab. When true, Terraform installs the Apache Flink Kubernetes Operator into the 'flink' namespace and creates the 'flink-gp3' StorageClass. The dedicated Flink Karpenter NodePool ('nodepool-flink.yaml') is applied regardless — it is inert without Flink pods."
+  type        = bool
+  default     = true
+}
+
+variable "flink_operator_version" {
+  description = "Apache Flink Kubernetes Operator Helm chart version. The Helm repository URL is derived from this value so both stay in lockstep. 1.15.0 is the current stable release published to https://downloads.apache.org/flink/."
+  type        = string
+  default     = "1.15.0"
+}

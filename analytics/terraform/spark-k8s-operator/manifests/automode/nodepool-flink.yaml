@@ -1,0 +1,80 @@
+# ---------------------------------------------------------------------
+# Dedicated Flink NodePool
+# ---------------------------------------------------------------------
+# Flink jobs are stateful long-running streaming processes. A Flink
+# JobManager loss triggers a job restart (with recovery from the latest
+# checkpoint); a TaskManager loss triggers partition reassignment and
+# a rescale. Both hurt latency and cost work.
+#
+# Two-way isolation with the Flink pods:
+#   - Node label `workload=flink` — used for observability/selectors.
+#   - Taint  `workload=flink:NoSchedule` — nothing else in the cluster
+#     tolerates this, so nothing else lands here.
+#   - The FlinkDeployment CR (analytics/flink/flink-cluster.yaml)
+#     carries the matching toleration and nodeSelector on both the
+#     JobManager and TaskManager pod templates.
+#
+# Consolidation:
+#   - WhenEmpty with a 5-minute delay. Voluntary consolidation of a
+#     partially-loaded Flink node causes a job restart. Karpenter still
+#     handles expiry / drift / forced disruption.
+#
+# Instance selection:
+#   - m/r families, Gen 5+, Nitro. Flink is memory-heavy (JVM heap +
+#     off-heap for RocksDB when enabled) and CPU-heavy during joins
+#     and windowed aggregations. r-family is the natural default;
+#     m stays in the mix for smaller footprints.
+#   - amd64 only. The Flink image and its extension JARs are amd64-
+#     first — arm64 support exists but keeps things predictable across
+#     the whole stack.
+#   - Sizes 2xlarge..8xlarge — a typical workshop-shape Flink job
+#     fits in 2xlarge; larger sizes let a participant crank parallelism.
+#   - T3 excluded — CPU credits deplete under sustained streaming load.
+#
+# For heavier workloads: `r7iz` (Sapphire Rapids high clock speed) for
+# latency-critical stream processing, or `m7g` (Graviton3) for the best
+# price-performance if all your operators are ARM-compatible.
+# ---------------------------------------------------------------------
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: flink
+spec:
+  template:
+    metadata:
+      labels:
+        workload: flink
+    spec:
+      taints:
+        - key: workload
+          value: flink
+          effect: NoSchedule
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: ebs-gp3-1000gi-6000iops-1000tp
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: eks.amazonaws.com/instance-category
+          operator: In
+          values: ["m", "r"]
+        - key: eks.amazonaws.com/instance-size
+          operator: In
+          values: ["2xlarge", "4xlarge", "8xlarge"]
+        - key: eks.amazonaws.com/instance-hypervisor
+          operator: In
+          values: ["nitro"]
+        - key: eks.amazonaws.com/instance-generation
+          operator: Gt
+          values: ["4"]
+  limits:
+    cpu: "200"
+    memory: 800Gi
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 5m

@@ -1,0 +1,96 @@
+---
+# ---------------------------------------------------------------------
+# Sample FlinkDeployment — StateMachine example
+# ---------------------------------------------------------------------
+# The StateMachine example ships in the official flink:1.20 image at
+# `local:///opt/flink/examples/streaming/StateMachineExample.jar`.
+# It generates its own stream of events, applies a stateful KeyedProcess
+# operator, and writes results to stdout — zero external dependencies,
+# ideal for demonstrating the operator without wiring up Kafka + a sink.
+#
+# Deployed in "Application mode": one JobManager plus N TaskManagers
+# per FlinkDeployment. This is the modern operator-native pattern
+# (Session mode — one Flink cluster hosting many jobs — is legacy).
+#
+# Pod placement:
+#   - nodeSelector `workload=flink` pins pods to the dedicated NodePool.
+#   - Toleration for `workload=flink:NoSchedule` gets past the taint.
+#   - No AZ anti-affinity is set: this is a single-job demo, not an HA
+#     multi-replica setup. For HA JobManager, add
+#     `spec.jobManager.replicas: 2` plus a `kubernetesHAOptions` block
+#     — see the workshop README for the upgrade path.
+# ---------------------------------------------------------------------
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: state-machine
+  namespace: flink
+spec:
+  image: flink:1.20
+  flinkVersion: v1_20
+
+  flinkConfiguration:
+    # 1 slot per TaskManager, 2 TaskManagers → total parallelism 2
+    # (matches spec.job.parallelism below).
+    taskmanager.numberOfTaskSlots: "1"
+
+    # HashMap state backend is fine for the demo. Swap to
+    #   state.backend.type: rocksdb
+    # once state outgrows the JVM heap; then also attach a PVC to the
+    # TaskManager pod on the flink-gp3 StorageClass for the local RocksDB dir.
+    state.backend.type: hashmap
+    state.checkpoints.dir: file:///tmp/flink-checkpoints
+    state.savepoints.dir:  file:///tmp/flink-savepoints
+
+  # Service account bundled with the operator install; carries the RBAC
+  # the JobManager needs to spawn TaskManager pods via Flink's native
+  # Kubernetes integration.
+  serviceAccount: flink
+
+  jobManager:
+    resource:
+      memory: 2048m
+      cpu: 1
+    podTemplate:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: jobmanager-pod-template
+      spec:
+        nodeSelector:
+          workload: flink
+        tolerations:
+          - key: workload
+            operator: Equal
+            value: flink
+            effect: NoSchedule
+        containers:
+          - name: flink-main-container
+
+  taskManager:
+    replicas: 2
+    resource:
+      memory: 2048m
+      cpu: 1
+    podTemplate:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: taskmanager-pod-template
+      spec:
+        nodeSelector:
+          workload: flink
+        tolerations:
+          - key: workload
+            operator: Equal
+            value: flink
+            effect: NoSchedule
+        containers:
+          - name: flink-main-container
+
+  job:
+    # The StateMachine example is baked into the official flink:1.20 image.
+    jarURI: local:///opt/flink/examples/streaming/StateMachineExample.jar
+    parallelism: 2
+    upgradeMode: stateless
+    state: running
