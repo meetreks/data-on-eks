@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploys the Kafka cluster + KafkaNodePools onto the workshop's EKS cluster.
-# Prerequisites are managed by Terraform when enable_kafka_lab = true:
+# Preflight checks for the Kafka lab. Verifies the workshop's Terraform
+# (enable_kafka_lab = true) has provisioned:
 #   - Strimzi Cluster Operator running in the "kafka" namespace
 #   - "kafka-gp3" StorageClass
 #   - Dedicated Kafka Karpenter NodePool with workload=kafka:NoSchedule taint
+#
+# This script does not deploy the Kafka cluster itself — that step is
+# an explicit `kubectl apply -f kafka-cluster.yaml` documented in the
+# README. Splitting preflight from apply keeps the lab flow linear and
+# gives the participant a clear point to inspect the manifest before
+# creating cluster resources.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE=kafka
 
 echo "Preflight: verifying operator, storageclass, and NodePool are in place..."
 if ! kubectl -n "${NAMESPACE}" rollout status deploy/strimzi-cluster-operator --timeout=120s; then
   echo "ERROR: Strimzi operator not ready in '${NAMESPACE}'."
-  echo "       If the workshop's Terraform was deployed with enable_kafka_lab=false,"
-  echo "       run ./install-strimzi.sh (fallback) or re-apply Terraform with the flag on."
+  echo "       Re-apply Terraform with enable_kafka_lab=true — the operator,"
+  echo "       StorageClass, and NodePool all come from that single toggle."
   exit 1
 fi
 
@@ -31,17 +36,6 @@ if ! kubectl get nodepool.karpenter.sh kafka &>/dev/null; then
 fi
 
 echo ""
-echo "Applying Kafka cluster + KafkaNodePools (controller, broker)..."
-kubectl apply -f "${SCRIPT_DIR}/kafka-cluster.yaml"
-
-echo ""
-echo "Waiting for the Kafka cluster to become Ready (3-5 minutes typical while brokers provision)..."
-kubectl wait --for=condition=Ready kafka/cluster -n "${NAMESPACE}" --timeout=600s
-
-echo ""
-kubectl get kafka,kafkanodepool -n "${NAMESPACE}"
-echo ""
-kubectl get pods -n "${NAMESPACE}"
-echo ""
-echo "Bootstrap servers:"
-kubectl get kafka cluster -n "${NAMESPACE}" -o jsonpath='{range .status.listeners[*]}  {.name}: {.bootstrapServers}{"\n"}{end}'
+echo "All prerequisites satisfied. Apply the Kafka cluster with:"
+echo "  kubectl apply -f kafka-cluster.yaml"
+echo "  kubectl wait --for=condition=Ready kafka/cluster -n ${NAMESPACE} --timeout=600s"

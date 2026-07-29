@@ -58,14 +58,15 @@ kubectl get storageclass       # expect: gp3 (default)  ebs.csi.eks.amazonaws.co
 ```
 analytics/kafka/
 ├── README.md
-├── deploy-kafka.sh      # applies kafka-cluster.yaml, waits for the Kafka CR to be Ready
+├── deploy-kafka.sh      # preflight checks — verifies Terraform has provisioned the operator, StorageClass, and NodePool
 ├── cleanup.sh           # removes the Kafka CR, topics, users, PVCs (Terraform owns the operator)
 ├── kafka-cluster.yaml   # Kafka CR + broker/controller KafkaNodePools + JMX ConfigMap
-├── install-strimzi.sh   # fallback operator install for clusters not built by this workshop
 └── examples/
     ├── hello-test-topic.yaml   # 3-partition, 3-replica test topic
     └── kafka-rebalance.yaml    # Cruise Control rebalance with strict RackAwareGoal
 ```
+
+The Strimzi operator itself is installed exclusively by the workshop's Terraform (see `analytics/terraform/spark-k8s-operator/kafka-operator.tf`). There is no bash-wrapper install script — Helm is invoked from Terraform's `helm_release` resource, so operator version and lifecycle are managed alongside the rest of the workshop infrastructure.
 
 ## Deploy
 
@@ -78,12 +79,16 @@ kubectl -n kafka rollout status deploy/strimzi-cluster-operator
 kubectl get storageclass kafka-gp3
 ```
 
-Both should be present. If you're on a cluster **not** created by this workshop's Terraform, run `./install-strimzi.sh` first — it applies the operator manifest directly from `https://strimzi.io/install/latest`. (The script uses `kubectl create`, not `apply`, because Strimzi's CRD annotations exceed Kubernetes' `last-applied-configuration` size limit.)
+Both should be present. If either is missing, re-apply Terraform with `enable_kafka_lab = true` (the default) — the operator, StorageClass, and NodePool all come from that single toggle.
 
 ### Apply the Kafka cluster
 
+Run the preflight check to confirm the Terraform prerequisites are in place, then apply the Kafka CR:
+
 ```sh
 ./deploy-kafka.sh
+kubectl apply -f kafka-cluster.yaml
+kubectl wait --for=condition=Ready kafka/cluster -n kafka --timeout=600s
 ```
 
 The Strimzi operator turns `kafka-cluster.yaml` into:
